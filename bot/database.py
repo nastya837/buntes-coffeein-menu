@@ -94,6 +94,22 @@ class Reminder(Base):
     )
 
 
+class Budget(Base):
+    """Лимит расходов по категории (на месяц)."""
+
+    __tablename__ = "budgets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    category: Mapped[str] = mapped_column(String(64))
+    amount: Mapped[float] = mapped_column(Float)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime, default=dt.datetime.utcnow
+    )
+
+
 class Db:
     """Обёртка над движком и сессиями."""
 
@@ -231,6 +247,81 @@ class Db:
                 .order_by(func.sum(Transaction.amount).desc())
             )
             return [(row[0], float(row[1])) for row in result.all()]
+
+    async def category_spent(
+        self, user_id: int, category: str, start: dt.date, end: dt.date
+    ) -> float:
+        async with self.session_factory() as session:
+            total = await session.scalar(
+                select(func.coalesce(func.sum(Transaction.amount), 0.0)).where(
+                    Transaction.user_id == user_id,
+                    Transaction.kind == "expense",
+                    Transaction.category == category,
+                    Transaction.op_date >= start,
+                    Transaction.op_date <= end,
+                )
+            )
+            return float(total or 0)
+
+    async def daily_expense_totals(
+        self, user_id: int, start: dt.date, end: dt.date
+    ) -> list[tuple[dt.date, float]]:
+        async with self.session_factory() as session:
+            result = await session.execute(
+                select(
+                    Transaction.op_date,
+                    func.coalesce(func.sum(Transaction.amount), 0.0),
+                )
+                .where(
+                    Transaction.user_id == user_id,
+                    Transaction.kind == "expense",
+                    Transaction.op_date >= start,
+                    Transaction.op_date <= end,
+                )
+                .group_by(Transaction.op_date)
+                .order_by(Transaction.op_date.asc())
+            )
+            return [(row[0], float(row[1])) for row in result.all()]
+
+    # ---- Лимиты (бюджеты) по категориям ----
+    async def set_budget(self, user_id: int, category: str, amount: float) -> None:
+        async with self.session_factory() as session:
+            result = await session.execute(
+                select(Budget).where(
+                    Budget.user_id == user_id, Budget.category == category
+                )
+            )
+            budget = result.scalar_one_or_none()
+            if budget is None:
+                session.add(Budget(user_id=user_id, category=category, amount=amount))
+            else:
+                budget.amount = amount
+            await session.commit()
+
+    async def list_budgets(self, user_id: int) -> list[Budget]:
+        async with self.session_factory() as session:
+            result = await session.execute(
+                select(Budget).where(Budget.user_id == user_id).order_by(Budget.category)
+            )
+            return list(result.scalars().all())
+
+    async def get_budget(self, user_id: int, category: str) -> Optional[Budget]:
+        async with self.session_factory() as session:
+            result = await session.execute(
+                select(Budget).where(
+                    Budget.user_id == user_id, Budget.category == category
+                )
+            )
+            return result.scalar_one_or_none()
+
+    async def delete_budget(self, user_id: int, budget_id: int) -> bool:
+        async with self.session_factory() as session:
+            budget = await session.get(Budget, budget_id)
+            if budget is None or budget.user_id != user_id:
+                return False
+            await session.delete(budget)
+            await session.commit()
+            return True
 
     async def recent_transactions(
         self, user_id: int, limit: int = 10

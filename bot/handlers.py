@@ -4,10 +4,11 @@ from __future__ import annotations
 import datetime as dt
 
 from aiogram import Bot, F, Router
-from aiogram.filters import Command, CommandStart
+from aiogram.filters import Command, CommandStart, StateFilter
+from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
-from .categories import emoji_for
+from .categories import EXPENSE_CATEGORIES, emoji_for
 from .config import Config
 from .database import Db
 from .keyboards import (
@@ -21,12 +22,19 @@ from .keyboards import (
     BTN_STATS,
     add_hint_menu,
     confirm_delete,
+    limit_categories_kb,
+    limits_menu,
     main_menu,
+    month_day_kb,
+    payment_amount_skip_kb,
     payments_menu,
     report_periods,
     settings_menu,
+    settings_with_limits,
+    weekday_kb,
 )
 from .llm import LLMClient
+from .states import AddLimit, AddPayment
 from .reports import (
     build_balance,
     build_context,
@@ -59,10 +67,12 @@ HELP = (
     "📊 <b>Отчёт</b> — за день / неделю / месяц / год.\n"
     "📈 <b>Статистика</b> — куда уходит больше всего денег.\n"
     "💡 <b>Совет</b> — где можно сэкономить (спроси своими словами).\n\n"
-    "🔔 <b>Платежи</b> — обязательные платежи (аренда, подписки, страховки):\n"
-    "• <code>/remind месяц 25 аренда 30000</code>\n"
-    "• <code>/remind неделя пн подписка 500</code>\n"
-    "• <code>/remind год 15.03 страховка 12000</code>\n\n"
+    "🔔 <b>Платежи</b> — обязательные платежи (аренда, подписки, страховки). "
+    "Добавляй пошагово кнопками: 🔔 Платежи → ➕.\n\n"
+    "🚦 <b>Лимиты</b> — задай бюджет на категорию (⚙️ Настройки → 🚦 Лимиты). "
+    "Предупрежу при 80% и превышении.\n\n"
+    "📊 <b>Графики</b> — под /report: диаграмма расходов, траты по дням, "
+    "сравнение с прошлым месяцем.\n\n"
     "⚙️ <b>Настройки</b> — ежедневный отчёт, валюта, экспорт в CSV.\n"
     "↩️ <code>/undo</code> — удалить последнюю запись.\n\n"
     "Все функции доступны кнопками меню снизу."
@@ -186,7 +196,7 @@ async def cmd_settings(message: Message, db: Db, config: Config):
     user = await _ensure_user(message, db, config)
     await message.answer(
         "⚙️ <b>Настройки</b>",
-        reply_markup=settings_menu(user.daily_report, user.currency),
+        reply_markup=settings_with_limits(user.daily_report, user.currency),
     )
 
 
@@ -367,7 +377,7 @@ async def _dispatch(message, db, llm, user, result, raw_text):
 
 
 # ---------- Свободный текст: главный «мозг» агента ----------
-@router.message(F.text & ~F.text.startswith("/"))
+@router.message(StateFilter(None), F.text & ~F.text.startswith("/"))
 async def handle_text(message: Message, db: Db, llm: LLMClient, config: Config):
     user = await _ensure_user(message, db, config)
     text = message.text.strip()
@@ -378,7 +388,7 @@ async def handle_text(message: Message, db: Db, llm: LLMClient, config: Config):
 
 
 # ---------- Голосовые сообщения ----------
-@router.message(F.voice | F.audio)
+@router.message(StateFilter(None), F.voice | F.audio)
 async def handle_voice(message: Message, bot: Bot, db: Db, llm: LLMClient, config: Config):
     user = await _ensure_user(message, db, config)
     if not getattr(llm, "supports_ai", False) or llm.provider != "openai":
@@ -407,7 +417,7 @@ async def handle_voice(message: Message, bot: Bot, db: Db, llm: LLMClient, confi
 
 
 # ---------- Фото чеков ----------
-@router.message(F.photo)
+@router.message(StateFilter(None), F.photo)
 async def handle_photo(message: Message, bot: Bot, db: Db, llm: LLMClient, config: Config):
     user = await _ensure_user(message, db, config)
     if not getattr(llm, "supports_ai", False):
@@ -456,7 +466,41 @@ async def _save_transactions(message, db, user, transactions, raw_text):
         )
     balance = await db.balance(user.id)
     lines.append(f"\n💰 Баланс: <b>{fmt_money(balance, user.currency)}</b>")
+
+    # Предупреждения по лимитам категорий
+    warnings = await _budget_warnings(db, user, {t["category"] for t in transactions
+                                                 if t["kind"] == "expense"})
+    if warnings:
+        lines.append("")
+        lines.extend(warnings)
+
     await message.answer("\n".join(lines), reply_markup=confirm_delete())
+
+
+async def _budget_warnings(db, user, categories) -> list[str]:
+    """Возвращает строки-предупреждения, если траты приблизились к лимиту или превысили его."""
+    today = dt.date.today()
+    start = today.replace(day=1)
+    out = []
+    for category in categories:
+        budget = await db.get_budget(user.id, category)
+        if not budget:
+            continue
+        spent = await db.category_spent(user.id, category, start, today)
+        share = spent / budget.amount if budget.amount else 0
+        if share >= 1.0:
+            over = spent - budget.amount
+            out.append(
+                f"🔴 Лимит по «{category}» превышен! "
+                f"{fmt_money(spent, user.currency)} из {fmt_money(budget.amount, user.currency)} "
+                f"(+{fmt_money(over, user.currency)})"
+            )
+        elif share >= 0.8:
+            out.append(
+                f"🟡 По «{category}» уже {share*100:.0f}% лимита "
+                f"({fmt_money(spent, user.currency)} из {fmt_money(budget.amount, user.currency)})"
+            )
+    return out
 
 
 # ---------- Колбэки ----------
@@ -501,6 +545,32 @@ async def cb_chart_compare(query: CallbackQuery, db: Db, config: Config):
         await query.message.answer_photo(photo)
 
 
+@router.callback_query(F.data == "chart:daily")
+async def cb_chart_daily(query: CallbackQuery, db: Db, config: Config):
+    user = await db.get_or_create_user(
+        query.from_user.id, query.from_user.full_name,
+        config.default_currency, config.default_timezone,
+    )
+    await query.answer("Строю график по дням…")
+    from .charts import daily_line
+
+    today = dt.date.today()
+    start = today.replace(day=1)
+    totals = dict(await db.daily_expense_totals(user.id, start, today))
+    days = list(range(1, today.day + 1))
+    values = [totals.get(dt.date(today.year, today.month, d), 0.0) for d in days]
+    if not any(values):
+        await query.message.answer("За этот месяц ещё нет расходов для графика 🤷")
+        return
+    avg = sum(values) / len([v for v in values]) if values else 0
+    png = daily_line(days, values, user.currency, "Траты по дням (текущий месяц)", avg)
+    if png:
+        await query.message.answer_photo(
+            BufferedInputFile(png, filename="daily.png"),
+            caption="📅 Динамика трат по дням",
+        )
+
+
 @router.callback_query(F.data == "tx:delete_last")
 async def cb_delete_last(query: CallbackQuery, db: Db, config: Config):
     user = await db.get_or_create_user(
@@ -527,7 +597,7 @@ async def cb_toggle_daily(query: CallbackQuery, db: Db, config: Config):
     new_value = not user.daily_report
     await db.update_user(user.id, daily_report=new_value)
     await query.message.edit_reply_markup(
-        reply_markup=settings_menu(new_value, user.currency)
+        reply_markup=settings_with_limits(new_value, user.currency)
     )
     await query.answer("Готово: " + ("включено" if new_value else "выключено"))
 
@@ -580,28 +650,268 @@ async def cb_pay_delete(query: CallbackQuery, db: Db, config: Config):
     await query.answer("Платёж удалён ✅")
 
 
+# ==================================================================
+#  Пошаговое добавление обязательного платежа (кнопками, FSM)
+# ==================================================================
+FREQ_TITLES = {"monthly": "ежемесячный", "weekly": "еженедельный", "yearly": "ежегодный"}
+
+
 @router.callback_query(F.data.startswith("pay:add:"))
-async def cb_pay_add(query: CallbackQuery):
-    kind = query.data.split(":")[2]
-    templates = {
-        "monthly": (
-            "Добавить <b>ежемесячный</b> платёж — скопируй и поправь:\n"
-            "<code>/remind месяц 25 аренда 30000</code>\n"
-            "(25 — день месяца, аренда — название, 30000 — сумма)"
-        ),
-        "weekly": (
-            "Добавить <b>еженедельный</b> платёж:\n"
-            "<code>/remind неделя пн подписка 500</code>\n"
-            "(пн — день недели: пн/вт/ср/чт/пт/сб/вс)"
-        ),
-        "yearly": (
-            "Добавить <b>ежегодный</b> платёж:\n"
-            "<code>/remind год 15.03 страховка 12000</code>\n"
-            "(15.03 — дата ДД.ММ)"
-        ),
-    }
-    await query.message.answer(templates.get(kind, REMIND_HELP))
+async def cb_pay_add(query: CallbackQuery, state: FSMContext):
+    freq = query.data.split(":")[2]
+    await state.clear()
+    await state.update_data(frequency=freq)
+    await state.set_state(AddPayment.title)
+    await query.message.answer(
+        f"➕ Новый <b>{FREQ_TITLES.get(freq, '')}</b> платёж.\n\n"
+        f"Шаг 1/3. Как называется? Напиши, например: <i>Аренда</i>"
+    )
     await query.answer()
+
+
+@router.message(AddPayment.title)
+async def fsm_payment_title(message: Message, state: FSMContext):
+    title = (message.text or "").strip()[:255]
+    if not title:
+        await message.answer("Напиши название платежа текстом 🙂")
+        return
+    await state.update_data(title=title)
+    await state.set_state(AddPayment.amount)
+    await message.answer(
+        "Шаг 2/3. Какая сумма? Напиши число (например <i>30000</i>) "
+        "или нажми кнопку.",
+        reply_markup=payment_amount_skip_kb(),
+    )
+
+
+def _parse_number(text: str):
+    cleaned = (text or "").strip().replace(" ", "").replace(",", ".")
+    cleaned = cleaned.rstrip("€$₽").strip()
+    try:
+        val = float(cleaned)
+        return val if val > 0 else None
+    except ValueError:
+        return None
+
+
+@router.message(AddPayment.amount)
+async def fsm_payment_amount(message: Message, state: FSMContext):
+    amount = _parse_number(message.text or "")
+    if amount is None:
+        await message.answer(
+            "Не понял сумму. Напиши число, например <i>30000</i>, или нажми «Без суммы».",
+            reply_markup=payment_amount_skip_kb(),
+        )
+        return
+    await state.update_data(amount=amount)
+    await _ask_payment_day(message, state)
+
+
+@router.callback_query(AddPayment.amount, F.data == "payadd:noamount")
+async def cb_payment_noamount(query: CallbackQuery, state: FSMContext):
+    await state.update_data(amount=None)
+    await _ask_payment_day(query.message, state)
+    await query.answer()
+
+
+async def _ask_payment_day(message, state: FSMContext):
+    data = await state.get_data()
+    freq = data["frequency"]
+    await state.set_state(AddPayment.day)
+    if freq == "weekly":
+        await message.answer("Шаг 3/3. В какой день недели?", reply_markup=weekday_kb())
+    elif freq == "yearly":
+        await message.answer(
+            "Шаг 3/3. Укажи дату в формате <b>ДД.ММ</b> (например <i>15.03</i>)."
+        )
+    else:  # monthly
+        await message.answer("Шаг 3/3. Какого числа каждый месяц?", reply_markup=month_day_kb())
+
+
+@router.callback_query(AddPayment.day, F.data.startswith("payday:wd:"))
+async def cb_payment_weekday(query: CallbackQuery, state: FSMContext, db: Db, config: Config):
+    weekday = int(query.data.split(":")[2])
+    await _finalize_payment(query.message, state, db, config, query.from_user,
+                            weekday=weekday)
+    await query.answer()
+
+
+@router.callback_query(AddPayment.day, F.data.startswith("payday:dom:"))
+async def cb_payment_dom(query: CallbackQuery, state: FSMContext, db: Db, config: Config):
+    day = int(query.data.split(":")[2])
+    await _finalize_payment(query.message, state, db, config, query.from_user,
+                            day_of_month=day)
+    await query.answer()
+
+
+@router.callback_query(AddPayment.day, F.data == "payday:other")
+async def cb_payment_other_day(query: CallbackQuery, state: FSMContext):
+    await state.update_data(await_text_day=True)
+    await query.message.answer("Введи число месяца от 1 до 28:")
+    await query.answer()
+
+
+@router.message(AddPayment.day)
+async def fsm_payment_day_text(message: Message, state: FSMContext, db: Db, config: Config):
+    data = await state.get_data()
+    freq = data["frequency"]
+    text = (message.text or "").strip()
+    if freq == "yearly":
+        if "." not in text:
+            await message.answer("Формат даты: <b>ДД.ММ</b>, например 15.03")
+            return
+        try:
+            d, m = text.split(".")[:2]
+            day, month = int(d), int(m)
+            assert 1 <= month <= 12
+        except (ValueError, AssertionError):
+            await message.answer("Не понял дату. Пример: <i>15.03</i>")
+            return
+        await _finalize_payment(message, state, db, config, message.from_user,
+                                day_of_month=day, month=month)
+    else:  # monthly text day
+        if not text.isdigit():
+            await message.answer("Введи число от 1 до 28.")
+            return
+        await _finalize_payment(message, state, db, config, message.from_user,
+                                day_of_month=int(text))
+
+
+async def _finalize_payment(message, state, db, config, tg_user,
+                            day_of_month=1, weekday=None, month=None):
+    data = await state.get_data()
+    user = await db.get_or_create_user(
+        tg_user.id, tg_user.full_name, config.default_currency, config.default_timezone
+    )
+    await db.add_reminder(
+        user.id, data["title"], data.get("amount"),
+        frequency=data["frequency"], day_of_month=day_of_month,
+        weekday=weekday, month=month,
+    )
+    await state.clear()
+    amount_str = (
+        f" на {fmt_money(data['amount'], user.currency)}" if data.get("amount") else ""
+    )
+    when = _describe_frequency(data["frequency"], day_of_month, weekday, month)
+    await message.answer(
+        f"✅ Готово! Платёж «<b>{data['title']}</b>»{amount_str} добавлен.\n{when}",
+        reply_markup=main_menu(),
+    )
+
+
+@router.callback_query(F.data == "payadd:cancel")
+async def cb_payadd_cancel(query: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await query.message.answer("Отменил ✖️", reply_markup=main_menu())
+    await query.answer()
+
+
+# ==================================================================
+#  Лимиты по категориям
+# ==================================================================
+async def _show_limits(target, db, user):
+    budgets = await db.list_budgets(user.id)
+    today = dt.date.today()
+    start = today.replace(day=1)
+    if not budgets:
+        await target.answer(
+            "🚦 <b>Лимиты по категориям</b>\n\nПока лимитов нет. Задай бюджет на категорию "
+            "(напр. «Кафе и рестораны — 300/мес»), и я предупрежу при превышении.",
+            reply_markup=limits_menu([]),
+        )
+        return
+    lines = ["🚦 <b>Лимиты по категориям (за месяц):</b>", ""]
+    for b in budgets:
+        spent = await db.category_spent(user.id, b.category, start, today)
+        share = spent / b.amount if b.amount else 0
+        bar = _progress_bar(share)
+        icon = "🔴" if share >= 1 else ("🟡" if share >= 0.8 else "🟢")
+        lines.append(
+            f"{icon} <b>{b.category}</b>\n"
+            f"{bar} {fmt_money(spent, user.currency)} / {fmt_money(b.amount, user.currency)}"
+        )
+    await target.answer("\n".join(lines), reply_markup=limits_menu(budgets))
+
+
+def _progress_bar(share: float, width: int = 10) -> str:
+    filled = min(width, int(round(share * width)))
+    return "▰" * filled + "▱" * (width - filled)
+
+
+@router.message(Command("limits"))
+async def cmd_limits(message: Message, db: Db, config: Config):
+    user = await _ensure_user(message, db, config)
+    await _show_limits(message, db, user)
+
+
+@router.callback_query(F.data == "lim:open")
+async def cb_lim_open(query: CallbackQuery, db: Db, config: Config):
+    user = await db.get_or_create_user(
+        query.from_user.id, query.from_user.full_name,
+        config.default_currency, config.default_timezone,
+    )
+    await _show_limits(query.message, db, user)
+    await query.answer()
+
+
+@router.callback_query(F.data == "lim:add")
+async def cb_lim_add(query: CallbackQuery):
+    await query.message.answer(
+        "Выбери категорию, для которой задать лимит:",
+        reply_markup=limit_categories_kb(EXPENSE_CATEGORIES),
+    )
+    await query.answer()
+
+
+@router.callback_query(F.data.startswith("lim:cat:"))
+async def cb_lim_cat(query: CallbackQuery, state: FSMContext):
+    category = query.data.split(":", 2)[2]
+    await state.clear()
+    await state.update_data(category=category)
+    await state.set_state(AddLimit.amount)
+    await query.message.answer(
+        f"Какой месячный лимит на «<b>{category}</b>»? Напиши сумму, например <i>300</i>."
+    )
+    await query.answer()
+
+
+@router.message(AddLimit.amount)
+async def fsm_limit_amount(message: Message, state: FSMContext, db: Db, config: Config):
+    amount = _parse_number(message.text or "")
+    if amount is None:
+        await message.answer("Напиши сумму числом, например <i>300</i>.")
+        return
+    data = await state.get_data()
+    user = await _ensure_user(message, db, config)
+    await db.set_budget(user.id, data["category"], amount)
+    await state.clear()
+    await message.answer(
+        f"✅ Лимит на «<b>{data['category']}</b>» — {fmt_money(amount, user.currency)}/мес. "
+        f"Предупрежу при 80% и превышении."
+    )
+    await _show_limits(message, db, user)
+
+
+@router.callback_query(F.data.startswith("lim:del:"))
+async def cb_lim_del(query: CallbackQuery, db: Db, config: Config):
+    user = await db.get_or_create_user(
+        query.from_user.id, query.from_user.full_name,
+        config.default_currency, config.default_timezone,
+    )
+    budget_id = int(query.data.split(":")[2])
+    await db.delete_budget(user.id, budget_id)
+    budgets = await db.list_budgets(user.id)
+    await query.message.edit_reply_markup(reply_markup=limits_menu(budgets))
+    await query.answer("Лимит удалён ✅")
+
+
+@router.message(Command("cancel"))
+async def cmd_cancel(message: Message, state: FSMContext):
+    if await state.get_state() is None:
+        await message.answer("Нечего отменять 🙂", reply_markup=main_menu())
+        return
+    await state.clear()
+    await message.answer("Отменил ✖️", reply_markup=main_menu())
 
 
 @router.callback_query(F.data == "add:voice")

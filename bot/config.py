@@ -54,7 +54,7 @@ class Config:
             anthropic_model=os.getenv("ANTHROPIC_MODEL", "claude-opus-4-8").strip(),
             openai_api_key=openai_key,
             openai_model=os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip(),
-            default_currency=os.getenv("DEFAULT_CURRENCY", "RUB").strip().upper(),
+            default_currency=os.getenv("DEFAULT_CURRENCY", "EUR").strip().upper(),
             default_timezone=os.getenv("DEFAULT_TIMEZONE", "Europe/Moscow").strip(),
             daily_report_hour=hour,
             database_path=os.getenv("DATABASE_PATH", "data/finance.db").strip(),

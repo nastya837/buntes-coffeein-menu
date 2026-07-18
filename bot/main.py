@@ -7,6 +7,7 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
 
 from .config import Config
@@ -50,7 +51,7 @@ async def main() -> None:
         token=config.bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
-    dp = Dispatcher()
+    dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(router)
 
     # Зависимости, доступные в хендлерах как аргументы
@@ -67,6 +68,7 @@ async def main() -> None:
             BotCommand(command="stats", description="📈 Статистика за месяц"),
             BotCommand(command="advice", description="💡 Совет по расходам"),
             BotCommand(command="reminders", description="🔔 Обязательные платежи"),
+            BotCommand(command="limits", description="🚦 Лимиты по категориям"),
             BotCommand(command="settings", description="⚙️ Настройки"),
             BotCommand(command="export", description="📤 Экспорт в CSV"),
             BotCommand(command="undo", description="↩️ Удалить последнюю запись"),
