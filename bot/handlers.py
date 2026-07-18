@@ -115,6 +115,23 @@ async def cmd_report(message: Message, db: Db, config: Config):
 async def cmd_stats(message: Message, db: Db, config: Config):
     user = await _ensure_user(message, db, config)
     await message.answer(await build_report(db, user.id, user.currency, "month"))
+    await _send_expense_pie(message, db, user, "month")
+
+
+async def _send_expense_pie(message_or_query, db, user, period: str):
+    """Строит и отправляет круговую диаграмму расходов за период."""
+    from .charts import expense_pie
+    from .reports import period_bounds
+
+    start, end, label = period_bounds(period)
+    breakdown = await db.category_breakdown(user.id, "expense", start, end)
+    png = expense_pie(breakdown, user.currency, f"Расходы {label}")
+    target = getattr(message_or_query, "message", message_or_query)
+    if png is None:
+        await target.answer("Пока нет расходов, чтобы построить диаграмму 🤷")
+        return
+    photo = BufferedInputFile(png, filename="expenses.png")
+    await target.answer_photo(photo, caption=f"📊 Куда уходят деньги ({label})")
 
 
 @router.message(F.text == BTN_ADD)
@@ -452,6 +469,36 @@ async def cb_report(query: CallbackQuery, db: Db, config: Config):
     period = query.data.split(":", 1)[1]
     await query.message.answer(await build_report(db, user.id, user.currency, period))
     await query.answer()
+
+
+@router.callback_query(F.data == "chart:month")
+async def cb_chart_month(query: CallbackQuery, db: Db, config: Config):
+    user = await db.get_or_create_user(
+        query.from_user.id, query.from_user.full_name,
+        config.default_currency, config.default_timezone,
+    )
+    await query.answer("Строю диаграмму…")
+    await _send_expense_pie(query, db, user, "month")
+
+
+@router.callback_query(F.data == "chart:compare")
+async def cb_chart_compare(query: CallbackQuery, db: Db, config: Config):
+    user = await db.get_or_create_user(
+        query.from_user.id, query.from_user.full_name,
+        config.default_currency, config.default_timezone,
+    )
+    await query.answer("Сравниваю месяцы…")
+    from .charts import month_compare_bar
+    from .reports import build_month_comparison
+
+    text, labels, prev_v, cur_v = await build_month_comparison(db, user.id, user.currency)
+    await query.message.answer(text)
+    png = month_compare_bar(
+        labels, prev_v, cur_v, user.currency, "Расходы: прошлый vs текущий месяц"
+    )
+    if png:
+        photo = BufferedInputFile(png, filename="compare.png")
+        await query.message.answer_photo(photo)
 
 
 @router.callback_query(F.data == "tx:delete_last")

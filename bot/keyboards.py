@@ -44,6 +44,16 @@ def report_periods() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="📆 Месяц", callback_data="report:month"),
                 InlineKeyboardButton(text="🗂 Год", callback_data="report:year"),
             ],
+            [
+                InlineKeyboardButton(
+                    text="📊 Диаграмма расходов", callback_data="chart:month"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📈 Сравнить с прошлым месяцем", callback_data="chart:compare"
+                )
+            ],
             [InlineKeyboardButton(text="💡 Совет по расходам", callback_data="report:advice")],
         ]
     )
