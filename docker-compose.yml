@@ -1,0 +1,9 @@
+services:
+  finance-bot:
+    build: .
+    container_name: finance-agent
+    restart: always            # автозапуск и перезапуск при сбоях/перезагрузке сервера
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data       # база данных сохраняется между перезапусками

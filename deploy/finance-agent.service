@@ -1,0 +1,17 @@
+[Unit]
+Description=Telegram Finance Agent Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Укажи путь к проекту и пользователя
+WorkingDirectory=/opt/finance-agent
+User=finance
+EnvironmentFile=/opt/finance-agent/.env
+ExecStart=/opt/finance-agent/.venv/bin/python -m bot.main
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

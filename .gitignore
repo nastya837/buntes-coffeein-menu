@@ -1,0 +1,21 @@
+# Секреты — НЕ коммитим
+.env
+*.env
+!.env.example
+
+# База данных и данные
+data/
+*.db
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Логи и временное
+*.log
+.DS_Store
