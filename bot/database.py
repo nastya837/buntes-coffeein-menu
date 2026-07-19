@@ -402,6 +402,10 @@ class Db:
                 elif rem.frequency == "yearly":
                     if rem.month == today.month and rem.day_of_month == today.day:
                         due.append(rem)
+                elif rem.frequency == "quarterly":
+                    anchor = rem.month or 1
+                    if rem.day_of_month == today.day and (today.month - anchor) % 3 == 0:
+                        due.append(rem)
                 else:  # monthly
                     if rem.day_of_month == today.day:
                         due.append(rem)

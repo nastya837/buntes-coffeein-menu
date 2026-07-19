@@ -79,6 +79,9 @@ def _due_today_local(rem, local_date: dt.date) -> bool:
         return rem.weekday == local_date.weekday()
     if rem.frequency == "yearly":
         return rem.month == local_date.month and rem.day_of_month == local_date.day
+    if rem.frequency == "quarterly":
+        anchor = rem.month or 1
+        return rem.day_of_month == local_date.day and (local_date.month - anchor) % 3 == 0
     return rem.day_of_month == local_date.day
 
 

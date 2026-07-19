@@ -222,8 +222,8 @@ WEEKDAY_NAMES = ["понедельник", "вторник", "среду", "че
 REMIND_HELP = (
     "Обязательные платежи — <code>/remind</code>:\n"
     "• Ежемесячно: <code>/remind месяц 25 аренда 1200</code>\n"
-    "• Еженедельно: <code>/remind неделя пн подписка 10</code>\n"
-    "• Ежегодно: <code>/remind год 15.03 страховка 300</code>\n"
+    "• Квартально: <code>/remind квартал 15 страховка 300</code>\n"
+    "• Ежегодно: <code>/remind год 15.03 налог 300</code>\n"
     "• Кратко (по умолчанию раз в месяц): <code>/remind 25 аренда 1200</code>"
 )
 
@@ -280,6 +280,13 @@ async def cmd_remind(message: Message, db: Db, config: Config):
                 "Укажи дату ДД.ММ. Пример: <code>/remind год 15.03 страховка 12000</code>"
             )
             return
+    elif freq_word in ("квартал", "ежеквартально", "quarter", "quarterly"):
+        frequency = "quarterly"
+        idx = 1
+        if len(tokens) > 1 and tokens[1].isdigit():
+            day_of_month = int(tokens[1])
+            idx = 2
+        month = dt.date.today().month  # точка отсчёта — текущий месяц
     elif freq_word in ("месяц", "ежемесячно", "month"):
         frequency = "monthly"
         idx = 1
@@ -312,6 +319,8 @@ def _describe_frequency(frequency, day_of_month, weekday, month) -> str:
         return f"Каждую {WEEKDAY_NAMES[weekday or 0]}."
     if frequency == "yearly":
         return f"Ежегодно {day_of_month:02d}.{(month or 1):02d}."
+    if frequency == "quarterly":
+        return f"Раз в квартал (каждые 3 месяца), {min(28, max(1, day_of_month))}-го числа."
     return f"Ежемесячно {min(28, max(1, day_of_month))}-го числа."
 
 
@@ -661,7 +670,12 @@ async def cb_pay_delete(query: CallbackQuery, db: Db, config: Config):
 # ==================================================================
 #  Пошаговое добавление обязательного платежа (кнопками, FSM)
 # ==================================================================
-FREQ_TITLES = {"monthly": "ежемесячный", "weekly": "еженедельный", "yearly": "ежегодный"}
+FREQ_TITLES = {
+    "monthly": "ежемесячный",
+    "weekly": "еженедельный",
+    "quarterly": "квартальный",
+    "yearly": "ежегодный",
+}
 
 
 @router.callback_query(F.data.startswith("pay:add:"))
@@ -732,6 +746,12 @@ async def _ask_payment_day(message, state: FSMContext):
         await message.answer(
             "Шаг 3/3. Укажи дату в формате <b>ДД.ММ</b> (например <i>15.03</i>)."
         )
+    elif freq == "quarterly":
+        await message.answer(
+            "Шаг 3/3. Какого числа платёж? Он будет повторяться каждые 3 месяца "
+            "(начиная с текущего).",
+            reply_markup=month_day_kb(),
+        )
     else:  # monthly
         await message.answer("Шаг 3/3. Какого числа каждый месяц?", reply_markup=month_day_kb())
 
@@ -791,6 +811,9 @@ async def _finalize_payment(message, state, db, config, tg_user,
     user = await db.get_or_create_user(
         tg_user.id, tg_user.full_name, config.default_currency, config.default_timezone
     )
+    # Для квартального платежа привязываем к текущему месяцу как точке отсчёта
+    if data["frequency"] == "quarterly" and month is None:
+        month = dt.date.today().month
     await db.add_reminder(
         user.id, data["title"], data.get("amount"),
         frequency=data["frequency"], day_of_month=day_of_month,

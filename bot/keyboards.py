@@ -106,7 +106,7 @@ def payments_menu(reminders) -> InlineKeyboardMarkup:
     rows.append(
         [
             InlineKeyboardButton(text="➕ Ежемесячный", callback_data="pay:add:monthly"),
-            InlineKeyboardButton(text="➕ Еженедельный", callback_data="pay:add:weekly"),
+            InlineKeyboardButton(text="➕ Квартальный", callback_data="pay:add:quarterly"),
         ]
     )
     rows.append(
