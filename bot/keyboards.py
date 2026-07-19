@@ -151,6 +151,23 @@ def weekday_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="✖️ Отмена", callback_data="payadd:cancel")]])
 
 
+MONTH_SHORT = ["Янв", "Фев", "Мар", "Апр", "Май", "Июн",
+               "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек"]
+
+
+def month_picker_kb() -> InlineKeyboardMarkup:
+    rows, row = [], []
+    for i, name in enumerate(MONTH_SHORT, start=1):
+        row.append(InlineKeyboardButton(text=name, callback_data=f"payday:mon:{i}"))
+        if len(row) == 4:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton(text="✖️ Отмена", callback_data="payadd:cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def month_day_kb() -> InlineKeyboardMarkup:
     days = [1, 5, 10, 15, 20, 25, 28]
     rows = []

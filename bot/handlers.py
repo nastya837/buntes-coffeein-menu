@@ -26,6 +26,7 @@ from .keyboards import (
     limits_menu,
     main_menu,
     month_day_kb,
+    month_picker_kb,
     payment_amount_skip_kb,
     payments_menu,
     report_periods,
@@ -315,13 +316,16 @@ async def cmd_remind(message: Message, db: Db, config: Config):
 
 
 def _describe_frequency(frequency, day_of_month, weekday, month) -> str:
+    day = min(28, max(1, day_of_month))
     if frequency == "weekly":
         return f"Каждую {WEEKDAY_NAMES[weekday or 0]}."
     if frequency == "yearly":
-        return f"Ежегодно {day_of_month:02d}.{(month or 1):02d}."
+        return f"Ежегодно {day} {MONTH_GEN[month or 1]}."
     if frequency == "quarterly":
-        return f"Раз в квартал (каждые 3 месяца), {min(28, max(1, day_of_month))}-го числа."
-    return f"Ежемесячно {min(28, max(1, day_of_month))}-го числа."
+        anchor = month or 1
+        months = [MONTH_NAMES[((anchor - 1 + k * 3) % 12) + 1] for k in range(4)]
+        return f"Раз в квартал, {day}-го числа: {', '.join(months)}."
+    return f"Ежемесячно {day}-го числа."
 
 
 @router.message(Command("reminders"))
@@ -726,34 +730,54 @@ async def fsm_payment_amount(message: Message, state: FSMContext):
         )
         return
     await state.update_data(amount=amount)
-    await _ask_payment_day(message, state)
+    await _ask_payment_step(message, state)
 
 
 @router.callback_query(AddPayment.amount, F.data == "payadd:noamount")
 async def cb_payment_noamount(query: CallbackQuery, state: FSMContext):
     await state.update_data(amount=None)
-    await _ask_payment_day(query.message, state)
+    await _ask_payment_step(query.message, state)
     await query.answer()
 
 
-async def _ask_payment_day(message, state: FSMContext):
+MONTH_NAMES = ["", "январь", "февраль", "март", "апрель", "май", "июнь",
+               "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"]
+MONTH_GEN = ["", "января", "февраля", "марта", "апреля", "мая", "июня",
+             "июля", "августа", "сентября", "октября", "ноября", "декабря"]
+
+
+async def _ask_payment_step(message, state: FSMContext):
+    """После суммы: для квартальных/годовых спрашиваем месяц, иначе — день."""
     data = await state.get_data()
     freq = data["frequency"]
-    await state.set_state(AddPayment.day)
     if freq == "weekly":
+        await state.set_state(AddPayment.day)
         await message.answer("Шаг 3/3. В какой день недели?", reply_markup=weekday_kb())
-    elif freq == "yearly":
-        await message.answer(
-            "Шаг 3/3. Укажи дату в формате <b>ДД.ММ</b> (например <i>15.03</i>)."
-        )
-    elif freq == "quarterly":
-        await message.answer(
-            "Шаг 3/3. Какого числа платёж? Он будет повторяться каждые 3 месяца "
-            "(начиная с текущего).",
-            reply_markup=month_day_kb(),
-        )
+    elif freq in ("quarterly", "yearly"):
+        await state.set_state(AddPayment.month)
+        if freq == "quarterly":
+            await message.answer(
+                "Шаг 3/4. С какого месяца начинать? Дальше платёж будет повторяться "
+                "каждые 3 месяца (например: апрель → июль → октябрь → январь).",
+                reply_markup=month_picker_kb(),
+            )
+        else:
+            await message.answer("Шаг 3/4. В каком месяце платёж?",
+                                 reply_markup=month_picker_kb())
     else:  # monthly
+        await state.set_state(AddPayment.day)
         await message.answer("Шаг 3/3. Какого числа каждый месяц?", reply_markup=month_day_kb())
+
+
+@router.callback_query(AddPayment.month, F.data.startswith("payday:mon:"))
+async def cb_payment_month(query: CallbackQuery, state: FSMContext):
+    month = int(query.data.split(":")[2])
+    await state.update_data(month=month)
+    await state.set_state(AddPayment.day)
+    await query.message.answer(
+        f"Шаг 4/4. Какого числа в {MONTH_NAMES[month]}?", reply_markup=month_day_kb()
+    )
+    await query.answer()
 
 
 @router.callback_query(AddPayment.day, F.data.startswith("payday:wd:"))
@@ -784,36 +808,23 @@ async def fsm_payment_day_text(message: Message, state: FSMContext, db: Db, conf
     data = await state.get_data()
     freq = data["frequency"]
     text = (message.text or "").strip()
-    if freq == "yearly":
-        if "." not in text:
-            await message.answer("Формат даты: <b>ДД.ММ</b>, например 15.03")
-            return
-        try:
-            d, m = text.split(".")[:2]
-            day, month = int(d), int(m)
-            assert 1 <= month <= 12
-        except (ValueError, AssertionError):
-            await message.answer("Не понял дату. Пример: <i>15.03</i>")
-            return
-        await _finalize_payment(message, state, db, config, message.from_user,
-                                day_of_month=day, month=month)
-    else:  # monthly text day
-        if not text.isdigit():
-            await message.answer("Введи число от 1 до 28.")
-            return
-        await _finalize_payment(message, state, db, config, message.from_user,
-                                day_of_month=int(text))
+    if freq == "weekly":
+        await message.answer("Выбери день недели кнопкой выше 👆")
+        return
+    if not text.isdigit() or not (1 <= int(text) <= 28):
+        await message.answer("Введи число от 1 до 28.")
+        return
+    await _finalize_payment(message, state, db, config, message.from_user,
+                            day_of_month=int(text))
 
 
 async def _finalize_payment(message, state, db, config, tg_user,
-                            day_of_month=1, weekday=None, month=None):
+                            day_of_month=1, weekday=None):
     data = await state.get_data()
     user = await db.get_or_create_user(
         tg_user.id, tg_user.full_name, config.default_currency, config.default_timezone
     )
-    # Для квартального платежа привязываем к текущему месяцу как точке отсчёта
-    if data["frequency"] == "quarterly" and month is None:
-        month = dt.date.today().month
+    month = data.get("month")  # выбран на шаге выбора месяца (квартальные/годовые)
     await db.add_reminder(
         user.id, data["title"], data.get("amount"),
         frequency=data["frequency"], day_of_month=day_of_month,
