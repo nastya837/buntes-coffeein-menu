@@ -29,7 +29,7 @@ def main_menu() -> ReplyKeyboardMarkup:
             [KeyboardButton(text=BTN_ADD), KeyboardButton(text=BTN_HELP)],
         ],
         resize_keyboard=True,
-        input_field_placeholder="Например: кофе 300 или зарплата 80000",
+        input_field_placeholder="Например: кофе 3 или зарплата 3000",
     )
 
 

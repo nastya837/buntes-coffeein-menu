@@ -48,9 +48,9 @@ router = Router()
 WELCOME = (
     "Привет! Я твой финансовый агент 🤖💰\n\n"
     "Просто пиши мне о своих тратах и доходах обычным языком:\n"
-    "• <i>кофе 300</i>\n"
-    "• <i>такси 450 и обед 600</i>\n"
-    "• <i>зарплата 80000</i>\n\n"
+    "• <i>кофе 3</i>\n"
+    "• <i>такси 12 и обед 20</i>\n"
+    "• <i>зарплата 3000</i>\n\n"
     "Я сам определю категорию и посчитаю баланс. А ещё умею:\n"
     "🎙 распознавать голосовые и 📸 фото чеков\n"
     "📊 показывать отчёты и статистику\n"
@@ -61,8 +61,8 @@ WELCOME = (
 
 HELP = (
     "<b>Что я умею</b> 👇\n\n"
-    "✍️ <b>Учёт.</b> Пиши операции текстом: «кофе 300», «зарплата 80000», "
-    "«такси 450 и обед 600». Можно 🎙 голосом или 📸 фото чека.\n\n"
+    "✍️ <b>Учёт.</b> Пиши операции текстом: «кофе 3», «зарплата 3000», "
+    "«такси 12 и обед 20». Можно 🎙 голосом или 📸 фото чека.\n\n"
     "💰 <b>Баланс</b> — сколько сейчас на руках.\n"
     "📊 <b>Отчёт</b> — за день / неделю / месяц / год.\n"
     "📈 <b>Статистика</b> — куда уходит больше всего денег.\n"
@@ -149,9 +149,9 @@ async def btn_add(message: Message, db: Db, config: Config):
     await _ensure_user(message, db, config)
     await message.answer(
         "✍️ Просто напиши трату или доход обычным текстом:\n"
-        "• <i>кофе 300</i>\n"
-        "• <i>такси 450 и обед 600</i>\n"
-        "• <i>зарплата 80000</i>\n\n"
+        "• <i>кофе 3</i>\n"
+        "• <i>такси 12 и обед 20</i>\n"
+        "• <i>зарплата 3000</i>\n\n"
         "Или пришли 🎙 голосовое / 📸 фото чека — я распознаю сам.",
         reply_markup=add_hint_menu(),
     )
@@ -221,10 +221,10 @@ WEEKDAY_NAMES = ["понедельник", "вторник", "среду", "че
                  "субботу", "воскресенье"]
 REMIND_HELP = (
     "Обязательные платежи — <code>/remind</code>:\n"
-    "• Ежемесячно: <code>/remind месяц 25 аренда 30000</code>\n"
-    "• Еженедельно: <code>/remind неделя пн подписка 500</code>\n"
-    "• Ежегодно: <code>/remind год 15.03 страховка 12000</code>\n"
-    "• Кратко (по умолчанию раз в месяц): <code>/remind 25 аренда 30000</code>"
+    "• Ежемесячно: <code>/remind месяц 25 аренда 1200</code>\n"
+    "• Еженедельно: <code>/remind неделя пн подписка 10</code>\n"
+    "• Ежегодно: <code>/remind год 15.03 страховка 300</code>\n"
+    "• Кратко (по умолчанию раз в месяц): <code>/remind 25 аренда 1200</code>"
 )
 
 
@@ -613,8 +613,8 @@ async def cb_toggle_daily(query: CallbackQuery, db: Db, config: Config):
 @router.callback_query(F.data == "settings:currency")
 async def cb_currency(query: CallbackQuery):
     await query.message.answer(
-        "Чтобы сменить валюту, отправь команду: <code>/currency USD</code> "
-        "(или EUR, KZT, UAH и т.д.)"
+        "Чтобы сменить валюту, отправь команду: <code>/currency EUR</code> "
+        "(или USD, GBP, PLN и т.д.)"
     )
     await query.answer()
 
@@ -686,7 +686,7 @@ async def fsm_payment_title(message: Message, state: FSMContext):
     await state.update_data(title=title)
     await state.set_state(AddPayment.amount)
     await message.answer(
-        "Шаг 2/3. Какая сумма? Напиши число (например <i>30000</i>) "
+        "Шаг 2/3. Какая сумма? Напиши число (например <i>1200</i>) "
         "или нажми кнопку.",
         reply_markup=payment_amount_skip_kb(),
     )
@@ -707,7 +707,7 @@ async def fsm_payment_amount(message: Message, state: FSMContext):
     amount = _parse_number(message.text or "")
     if amount is None:
         await message.answer(
-            "Не понял сумму. Напиши число, например <i>30000</i>, или нажми «Без суммы».",
+            "Не понял сумму. Напиши число, например <i>1200</i>, или нажми «Без суммы».",
             reply_markup=payment_amount_skip_kb(),
         )
         return
@@ -960,8 +960,34 @@ async def cmd_currency(message: Message, db: Db, config: Config):
     user = await _ensure_user(message, db, config)
     parts = (message.text or "").split()
     if len(parts) < 2:
-        await message.answer("Формат: <code>/currency USD</code>")
+        await message.answer("Формат: <code>/currency EUR</code>")
         return
     currency = parts[1].strip().upper()[:8]
     await db.update_user(user.id, currency=currency)
     await message.answer(f"💱 Валюта изменена на <b>{currency}</b>")
+
+
+@router.message(Command("timezone"))
+async def cmd_timezone(message: Message, db: Db, config: Config):
+    user = await _ensure_user(message, db, config)
+    parts = (message.text or "").split()
+    if len(parts) < 2:
+        await message.answer(
+            "Формат: <code>/timezone Europe/Berlin</code>\n"
+            "Примеры: Europe/Berlin, Europe/Paris, Europe/Warsaw, Europe/Lisbon"
+        )
+        return
+    tz = parts[1].strip()
+    try:
+        from zoneinfo import ZoneInfo
+
+        ZoneInfo(tz)  # проверка, что зона существует
+    except Exception:
+        await message.answer(
+            "Не знаю такой часовой пояс 🤔 Пример: <code>/timezone Europe/Berlin</code>"
+        )
+        return
+    await db.update_user(user.id, timezone=tz)
+    await message.answer(
+        f"🕒 Часовой пояс: <b>{tz}</b>. Теперь отчёты и напоминания — по этому времени."
+    )

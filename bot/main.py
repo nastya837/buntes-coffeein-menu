@@ -70,6 +70,8 @@ async def main() -> None:
             BotCommand(command="reminders", description="🔔 Обязательные платежи"),
             BotCommand(command="limits", description="🚦 Лимиты по категориям"),
             BotCommand(command="settings", description="⚙️ Настройки"),
+            BotCommand(command="currency", description="💱 Сменить валюту"),
+            BotCommand(command="timezone", description="🕒 Часовой пояс"),
             BotCommand(command="export", description="📤 Экспорт в CSV"),
             BotCommand(command="undo", description="↩️ Удалить последнюю запись"),
             BotCommand(command="help", description="❓ Помощь"),

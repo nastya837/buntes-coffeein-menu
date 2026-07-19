@@ -61,7 +61,7 @@ PAIR_RE = re.compile(
     r"([а-яёa-z][а-яёa-z\s]*?)\s*"
     r"(\d[\d\s]*(?:[.,]\d+)?)\s*"
     r"(тыс|к|k)?\s*"
-    r"(?:руб\.?|р\.?|₽|rub)?\b",
+    r"(?:евро|eur|€|руб\.?|р\.?|₽|rub|\$|usd|доллар\w*)?\b",
     re.IGNORECASE,
 )
 LEADING_JUNK_RE = re.compile(r"^(и|а|ещё|еще|плюс|на|за)\s+", re.IGNORECASE)
