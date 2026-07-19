@@ -8,10 +8,14 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import logging
 from typing import Any
 
 from .categories import EXPENSE_CATEGORIES, INCOME_CATEGORIES
 from .config import Config
+from .fallback import FallbackLLM
+
+logger = logging.getLogger("finance-agent.llm")
 
 # JSON-схема ответа агента при разборе сообщения.
 ANALYSIS_SCHEMA: dict[str, Any] = {
@@ -108,6 +112,7 @@ class LLMClient:
     def __init__(self, config: Config):
         self.config = config
         self.provider = config.llm_provider
+        self._fallback = FallbackLLM()  # запасной разбор, если AI недоступен
         if self.provider == "anthropic":
             from anthropic import AsyncAnthropic
 
@@ -133,16 +138,11 @@ class LLMClient:
             else:
                 raw = await self._openai_json(system, user_content)
             data = json.loads(raw)
-        except Exception:
-            # Фолбэк: если LLM недоступен или вернул мусор — считаем это вопросом
-            return {
-                "intent": "smalltalk",
-                "transactions": [],
-                "reply": (
-                    "Не удалось обработать сообщение 😔 Попробуй ещё раз или напиши "
-                    "трату в формате «кофе 300»."
-                ),
-            }
+        except Exception as exc:  # noqa: BLE001
+            # AI недоступен (нет ключа/квоты/сети) — не «немеем», а разбираем
+            # сообщение простым парсером, чтобы учёт трат продолжал работать.
+            logger.warning("LLM analyze failed (%s): %s", type(exc).__name__, exc)
+            return await self._fallback.analyze(text, context, currency)
         return self._normalize(data)
 
     async def advice(self, question: str, context: str, currency: str) -> str:
@@ -156,8 +156,13 @@ class LLMClient:
             if self.provider == "anthropic":
                 return await self._anthropic_text(system, user_content)
             return await self._openai_text(system, user_content)
-        except Exception:
-            return "Сейчас не получилось ответить 😔 Попробуй, пожалуйста, чуть позже."
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("LLM advice failed (%s): %s", type(exc).__name__, exc)
+            return (
+                "Пока не получилось дать AI-совет (возможно, недоступен ключ OpenAI "
+                "или закончились средства). Простой учёт и отчёты работают как обычно.\n\n"
+                + context
+            )
 
     # ---- Anthropic ----
     async def _anthropic_json(self, system: str, user_content: str) -> str:
@@ -293,11 +298,15 @@ class LLMClient:
                 )
                 raw = resp.choices[0].message.content or "{}"
             data = json.loads(raw)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("LLM image failed (%s): %s", type(exc).__name__, exc)
             return {
                 "intent": "smalltalk",
                 "transactions": [],
-                "reply": "Не удалось распознать чек на фото 😔 Попробуй ещё раз.",
+                "reply": (
+                    "Не удалось распознать чек 😔 Возможно, недоступен ключ OpenAI. "
+                    "Пока можешь вписать сумму текстом, например «продукты 15»."
+                ),
             }
         return self._normalize(data)
 

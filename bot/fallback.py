@@ -17,7 +17,9 @@ EXPENSE_KEYWORDS: dict[str, list[str]] = {
                  "хлеб", "мясо", "вкусвилл", "магнит"],
     "Кафе и рестораны": ["кофе", "кафе", "ресторан", "обед", "ужин", "завтрак", "бар",
                           "старбакс", "кофейн", "фастфуд", "макдак", "kfc", "бургер",
-                          "пицц", "суши", "доставка еды", "перекус"],
+                          "пицц", "суши", "доставка еды", "перекус", "капучино", "капуч",
+                          "латте", "эспрессо", "американо", "раф", "флэт", "мокко",
+                          "чай", "круассан", "десерт", "мороженое", "шаверм", "шаурм"],
     "Транспорт": ["такси", "метро", "автобус", "бензин", "заправк", "парковк",
                   "проезд", "трамвай", "самокат", "каршеринг", "uber", "яндекс такси"],
     "Жильё": ["аренда", "квартплата", "ипотек", "квартира", "жильё", "жилье"],
@@ -63,6 +65,16 @@ PAIR_RE = re.compile(
     re.IGNORECASE,
 )
 LEADING_JUNK_RE = re.compile(r"^(и|а|ещё|еще|плюс|на|за)\s+", re.IGNORECASE)
+
+# «число [валюта] [на/за] слово» — для фраз вида «3 евро на капучино», «5 на обед»
+NUM_FIRST_RE = re.compile(
+    r"(\d[\d\s]*(?:[.,]\d+)?)\s*"
+    r"(тыс|к|k)?\s*"
+    r"(?:евро|eur|€|руб\.?|р\.?|₽|\$|доллар\w*|usd)?\s*"
+    r"(?:на|за|для)?\s*"
+    r"([а-яёa-z][а-яёa-z]+)",
+    re.IGNORECASE,
+)
 
 
 def _parse_amount(raw: str, multiplier_token: str = "") -> float | None:
@@ -116,6 +128,28 @@ class FallbackLLM:
                     "description": word[:255],
                 }
             )
+
+        # Если «слово+число» ничего не дало — пробуем «число+слово»
+        # (например «3 евро на капучино», «5 на обед»)
+        if not transactions:
+            for amount_raw, mult, word in NUM_FIRST_RE.findall(text):
+                word = LEADING_JUNK_RE.sub("", word.strip()).strip()
+                amount = _parse_amount(amount_raw, mult)
+                if not word or amount is None or amount <= 0:
+                    continue
+                if word.lower() in ("евро", "eur", "руб", "usd", "доллар", "долларов"):
+                    continue  # это валюта, а не категория
+                is_income = any(t in word.lower() for t in INCOME_TRIGGERS) or any(
+                    t in lowered for t in INCOME_TRIGGERS
+                )
+                transactions.append(
+                    {
+                        "kind": "income" if is_income else "expense",
+                        "amount": amount,
+                        "category": _categorize(word, is_income),
+                        "description": word[:255],
+                    }
+                )
 
         if transactions:
             return {"intent": "transaction", "transactions": transactions, "reply": ""}

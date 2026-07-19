@@ -404,8 +404,16 @@ async def handle_voice(message: Message, bot: Bot, db: Db, llm: LLMClient, confi
     audio_bytes = buf.read()
     try:
         text = await llm.transcribe(audio_bytes, filename="voice.ogg")
-    except Exception:
-        await message.answer("Не удалось распознать голосовое 😔 Попробуй ещё раз.")
+    except Exception as exc:  # noqa: BLE001
+        import logging
+
+        logging.getLogger("finance-agent").warning(
+            "Transcribe failed (%s): %s", type(exc).__name__, exc
+        )
+        await message.answer(
+            "Не удалось распознать голосовое 😔 Возможно, недоступен ключ OpenAI или "
+            "закончились средства. Пока напиши трату текстом, например «кофе 3»."
+        )
         return
     if not text:
         await message.answer("Кажется, в голосовом ничего не разобрать 🤔")
