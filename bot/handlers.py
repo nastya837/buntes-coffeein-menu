@@ -508,7 +508,7 @@ async def handle_voice(message: Message, bot: Bot, db: Db, llm: LLMClient, confi
         import logging
 
         logging.getLogger("finance-agent").warning(
-            "Transcribe failed (%s): %s", type(exc).__name__, exc
+            "Transcribe failed (%s): %s", type(exc).__name__, exc, exc_info=True
         )
         await message.answer(
             "Не удалось распознать голосовое 😔 Возможно, недоступен ключ OpenAI или "

@@ -141,7 +141,11 @@ class LLMClient:
         except Exception as exc:  # noqa: BLE001
             # AI недоступен (нет ключа/квоты/сети) — не «немеем», а разбираем
             # сообщение простым парсером, чтобы учёт трат продолжал работать.
-            logger.warning("LLM analyze failed (%s): %s", type(exc).__name__, exc)
+            # exc_info=True — печатаем полный traceback, чтобы видеть точную
+            # причину сбоя (а не только текст исключения) в docker logs.
+            logger.warning(
+                "LLM analyze failed (%s): %s", type(exc).__name__, exc, exc_info=True
+            )
             return await self._fallback.analyze(text, context, currency)
         return self._normalize(data)
 
@@ -157,7 +161,9 @@ class LLMClient:
                 return await self._anthropic_text(system, user_content)
             return await self._openai_text(system, user_content)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("LLM advice failed (%s): %s", type(exc).__name__, exc)
+            logger.warning(
+                "LLM advice failed (%s): %s", type(exc).__name__, exc, exc_info=True
+            )
             return (
                 "Пока не получилось дать AI-совет (возможно, недоступен ключ OpenAI "
                 "или закончились средства). Простой учёт и отчёты работают как обычно.\n\n"
@@ -298,7 +304,9 @@ class LLMClient:
                 raw = resp.choices[0].message.content or "{}"
             data = json.loads(raw)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("LLM image failed (%s): %s", type(exc).__name__, exc)
+            logger.warning(
+                "LLM image failed (%s): %s", type(exc).__name__, exc, exc_info=True
+            )
             return {
                 "intent": "smalltalk",
                 "transactions": [],
