@@ -220,12 +220,11 @@ class LLMClient:
         """Расшифровывает аудио в текст (только OpenAI Whisper)."""
         if self.provider != "openai":
             raise RuntimeError("Транскрипция доступна только с провайдером OpenAI.")
-        import io
-
-        buf = io.BytesIO(audio_bytes)
-        buf.name = filename
+        # Передаём файл кортежем (имя, байты) — самый надёжный способ для OpenAI SDK.
         resp = await self._openai.audio.transcriptions.create(
-            model="whisper-1", file=buf
+            model="whisper-1",
+            file=(filename, audio_bytes),
+            language="ru",
         )
         return (resp.text or "").strip()
 
