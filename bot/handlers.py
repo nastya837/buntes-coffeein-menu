@@ -8,7 +8,7 @@ from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
-from .categories import EXPENSE_CATEGORIES, emoji_for
+from .categories import EXPENSE_CATEGORIES, INCOME_CATEGORIES, emoji_for
 from .config import Config
 from .database import Db
 from .keyboards import (
@@ -16,12 +16,15 @@ from .keyboards import (
     BTN_ADVICE,
     BTN_BALANCE,
     BTN_HELP,
+    BTN_INCOME,
     BTN_PAYMENTS,
     BTN_REPORT,
     BTN_SETTINGS,
     BTN_STATS,
     add_hint_menu,
     confirm_delete,
+    income_categories_kb,
+    income_desc_skip_kb,
     limit_categories_kb,
     limits_menu,
     main_menu,
@@ -35,7 +38,7 @@ from .keyboards import (
     weekday_kb,
 )
 from .llm import LLMClient
-from .states import AddLimit, AddPayment
+from .states import AddIncome, AddLimit, AddPayment
 from .reports import (
     build_balance,
     build_context,
@@ -63,7 +66,8 @@ WELCOME = (
 HELP = (
     "<b>Что я умею</b> 👇\n\n"
     "✍️ <b>Учёт.</b> Пиши операции текстом: «кофе 3», «зарплата 3000», "
-    "«такси 12 и обед 20». Можно 🎙 голосом или 📸 фото чека.\n\n"
+    "«такси 12 и обед 20». Можно 🎙 голосом или 📸 фото чека.\n"
+    "Или жми кнопки: ➖ Добавить трату / ➕ Добавить доход — пошагово, без опечаток.\n\n"
     "💰 <b>Баланс</b> — сколько сейчас на руках.\n"
     "📊 <b>Отчёт</b> — за день / неделю / месяц / год.\n"
     "📈 <b>Статистика</b> — куда уходит больше всего денег.\n"
@@ -161,6 +165,89 @@ async def btn_add(message: Message, db: Db, config: Config):
 @router.message(F.text == BTN_HELP)
 async def btn_help(message: Message):
     await message.answer(HELP)
+
+
+# ==================================================================
+#  Добавление дохода кнопками (сумма → категория → описание)
+# ==================================================================
+@router.message(F.text == BTN_INCOME)
+async def btn_income(message: Message, state: FSMContext, db: Db, config: Config):
+    await _ensure_user(message, db, config)
+    await state.clear()
+    await state.set_state(AddIncome.amount)
+    await message.answer(
+        "➕ <b>Добавляем доход.</b>\n\nСколько пришло? Напиши число, например <i>3000</i>."
+    )
+
+
+@router.message(AddIncome.amount)
+async def fsm_income_amount(message: Message, state: FSMContext):
+    amount = _parse_number(message.text or "")
+    if amount is None:
+        await message.answer("Не понял сумму. Напиши число, например <i>3000</i>.")
+        return
+    await state.update_data(amount=amount)
+    await state.set_state(AddIncome.category)
+    await message.answer(
+        "Выбери категорию дохода:", reply_markup=income_categories_kb(INCOME_CATEGORIES)
+    )
+
+
+@router.callback_query(AddIncome.category, F.data.startswith("inc:cat:"))
+async def cb_income_category(query: CallbackQuery, state: FSMContext):
+    category = query.data.split(":", 2)[2]
+    await state.update_data(category=category)
+    await state.set_state(AddIncome.description)
+    await query.message.answer(
+        "Добавь короткое описание (необязательно) или пропусти:",
+        reply_markup=income_desc_skip_kb(),
+    )
+    await query.answer()
+
+
+@router.callback_query(AddIncome.description, F.data == "inc:nodesc")
+async def cb_income_nodesc(query: CallbackQuery, state: FSMContext, db: Db, config: Config):
+    await _finalize_income(query.message, state, db, config, query.from_user, description="")
+    await query.answer()
+
+
+@router.message(AddIncome.description)
+async def fsm_income_description(message: Message, state: FSMContext, db: Db, config: Config):
+    description = (message.text or "").strip()[:255]
+    await _finalize_income(message, state, db, config, message.from_user, description=description)
+
+
+@router.callback_query(F.data == "inc:cancel")
+async def cb_income_cancel(query: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await query.message.answer("Отменил ✖️", reply_markup=main_menu())
+    await query.answer()
+
+
+async def _finalize_income(message, state, db, config, tg_user, description: str):
+    data = await state.get_data()
+    user = await db.get_or_create_user(
+        tg_user.id, tg_user.full_name, config.default_currency, config.default_timezone
+    )
+    tx = await db.add_transaction(
+        user_id=user.id,
+        kind="income",
+        amount=data["amount"],
+        currency=user.currency,
+        category=data["category"],
+        description=description,
+        op_date=dt.date.today(),
+        raw_text="",
+    )
+    await state.clear()
+    balance = await db.balance(user.id)
+    desc = f" — {description}" if description else ""
+    await message.answer(
+        f"⬆️ {emoji_for(tx.category)} <b>{tx.category}</b>: "
+        f"{fmt_money(tx.amount, user.currency)}{desc}\n\n"
+        f"💰 Баланс: <b>{fmt_money(balance, user.currency)}</b>",
+        reply_markup=main_menu(),
+    )
 
 
 @router.message(Command("undo"))

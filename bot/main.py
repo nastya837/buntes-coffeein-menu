@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -14,6 +15,14 @@ from .config import Config
 from .database import Db
 from .handlers import router
 from .scheduler import setup_scheduler
+
+# На всякий случай явно переключаем stdout/stderr в UTF-8: в некоторых
+# окружениях (например, минимальный Docker-образ без локали) Python может
+# по умолчанию выбрать ASCII, и тогда логирование кириллицы падает с
+# UnicodeEncodeError. reconfigure появился в Python 3.7+.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="backslashreplace")
 
 logging.basicConfig(
     level=logging.INFO,

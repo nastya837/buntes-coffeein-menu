@@ -15,7 +15,8 @@ BTN_STATS = "📈 Статистика"
 BTN_PAYMENTS = "🔔 Платежи"
 BTN_ADVICE = "💡 Совет"
 BTN_SETTINGS = "⚙️ Настройки"
-BTN_ADD = "➕ Добавить трату"
+BTN_ADD = "➖ Добавить трату"
+BTN_INCOME = "➕ Добавить доход"
 BTN_HELP = "❓ Помощь"
 
 
@@ -26,7 +27,8 @@ def main_menu() -> ReplyKeyboardMarkup:
             [KeyboardButton(text=BTN_BALANCE), KeyboardButton(text=BTN_REPORT)],
             [KeyboardButton(text=BTN_STATS), KeyboardButton(text=BTN_PAYMENTS)],
             [KeyboardButton(text=BTN_ADVICE), KeyboardButton(text=BTN_SETTINGS)],
-            [KeyboardButton(text=BTN_ADD), KeyboardButton(text=BTN_HELP)],
+            [KeyboardButton(text=BTN_ADD), KeyboardButton(text=BTN_INCOME)],
+            [KeyboardButton(text=BTN_HELP)],
         ],
         resize_keyboard=True,
         input_field_placeholder="Например: кофе 3 или зарплата 3000",
@@ -195,6 +197,28 @@ def limit_categories_kb(categories: list[str]) -> InlineKeyboardMarkup:
         rows.append(row)
     rows.append([InlineKeyboardButton(text="✖️ Отмена", callback_data="payadd:cancel")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def income_categories_kb(categories: list[str]) -> InlineKeyboardMarkup:
+    rows, row = [], []
+    for c in categories:
+        row.append(InlineKeyboardButton(text=c, callback_data=f"inc:cat:{c}"))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton(text="✖️ Отмена", callback_data="inc:cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def income_desc_skip_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="➡️ Без описания", callback_data="inc:nodesc")],
+            [InlineKeyboardButton(text="✖️ Отмена", callback_data="inc:cancel")],
+        ]
+    )
 
 
 def limits_menu(budgets) -> InlineKeyboardMarkup:

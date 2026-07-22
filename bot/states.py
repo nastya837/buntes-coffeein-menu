@@ -15,3 +15,11 @@ class AddLimit(StatesGroup):
     """Установка лимита по категории."""
 
     amount = State()  # ждём сумму лимита (категория уже выбрана кнопкой)
+
+
+class AddIncome(StatesGroup):
+    """Пошаговое добавление дохода кнопками (сумма → категория → описание)."""
+
+    amount = State()
+    category = State()
+    description = State()
